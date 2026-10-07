@@ -9,7 +9,8 @@ import { useToday } from "@/lib/hooks";
 import { Button, ButtonLink, Checkbox, DeadlineBadge, Field, Panel, Pill, Progress, Segmented, inputClass } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { IconBack, IconPlus, IconTrash } from "@/components/icons";
-import { CATEGORIES, breakdownSteps, tinySteps } from "@/lib/domain/breakdown";
+import { CATEGORIES, tinySteps } from "@/lib/domain/breakdown";
+import { suggestBreakdown } from "@/lib/breakdown-client";
 import { INTENSITY, type DeadlineState, type Intensity } from "@/lib/domain/cascade";
 import { addDays, daysBetween, formatDuration, formatShortDate } from "@/lib/domain/time";
 import type { Task } from "@/lib/types";
@@ -130,8 +131,7 @@ function Goal() {
             variant="danger"
             onClick={() => {
               if (confirm("Delete this goal and its tasks?")) {
-                tasks.forEach((t) => s.deleteTask(t.id));
-                useStore.setState((st) => ({ goals: st.goals.filter((g) => g.id !== goal.id) }));
+                s.deleteGoal(goal.id);
                 router.push("/tasks");
               }
             }}
@@ -246,10 +246,7 @@ function GoalSettings({ goalId }: { goalId: string }) {
             <p className="mb-1.5 text-sm font-semibold">Share deadlines with buddies</p>
             <Segmented
               value={goal.committed ? "y" : "n"}
-              onChange={(v) => {
-                s.updateGoal(goal.id, { committed: v === "y" });
-                useStore.setState((st) => ({ tasks: st.tasks.map((t) => (t.goalId === goal.id ? { ...t, committed: v === "y" } : t)) }));
-              }}
+              onChange={(v) => s.setGoalCommitted(goal.id, v === "y")}
               options={[
                 { value: "y", label: "Committed" },
                 { value: "n", label: "Just for me" },
@@ -278,10 +275,11 @@ function TaskRow({
   open: boolean;
   onToggleOpen: () => void;
   onExtend: () => void;
-  category: Parameters<typeof breakdownSteps>[1];
+  category: import("@/lib/domain/breakdown").Category;
 }) {
   const s = useStore();
   const [sub, setSub] = useState("");
+  const [breaking, setBreaking] = useState(false);
   const state = stateOf(task, today);
   const done = !!task.completedAt;
   const pending = task.extensions.find((e) => e.status === "pending");
@@ -331,12 +329,16 @@ function TaskRow({
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => {
-                  s.addSubtasks(task.id, breakdownSteps(task.title, category, "less").map((x) => ({ ...x, title: x.title })));
+                disabled={breaking}
+                onClick={async () => {
+                  setBreaking(true);
+                  const steps = await suggestBreakdown(task.title, category, "medium", { kind: "task", deadline: task.dueOn });
+                  setBreaking(false);
+                  s.addSubtasks(task.id, steps);
                   s.showToast("🧩 Much easier. One step at a time.");
                 }}
               >
-                🧩 Break it down
+                {breaking ? "Breaking it down…" : "🧩 Break it down"}
               </Button>
               <Button
                 size="sm"
@@ -415,7 +417,7 @@ function ExtensionModal({ task, onClose, extensionsLeft, witnessed }: { task: Ta
     if (task?.dueOn) {
       setDate(addDays(task.dueOn, 3));
       setReason("");
-      setWitness(buddies[0]?.name ?? "");
+      setWitness(buddies[0]?.id ?? "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id]);
@@ -442,6 +444,7 @@ function ExtensionModal({ task, onClose, extensionsLeft, witnessed }: { task: Ta
   }
 
   const outOfExtensions = extensionsLeft <= 0;
+  const witnessName = buddies.find((b) => b.id === witness)?.name ?? "your buddy";
   return (
     <Modal open onClose={onClose} title="Request an extension">
       {outOfExtensions ? (
@@ -462,7 +465,7 @@ function ExtensionModal({ task, onClose, extensionsLeft, witnessed }: { task: Ta
           onSubmit={(e) => {
             e.preventDefault();
             s.requestExtension(task.id, date, reason.trim(), witnessed && witness ? witness : undefined);
-            s.showToast(witnessed && witness ? `Request sent to ${witness}.` : "Deadline moved.");
+            s.showToast(witnessed && witness ? `Request sent to ${witnessName}.` : "Deadline moved.");
             onClose();
           }}
         >
@@ -479,7 +482,9 @@ function ExtensionModal({ task, onClose, extensionsLeft, witnessed }: { task: Ta
             <Field label="Who should approve it?">
               <select className={inputClass} value={witness} onChange={(e) => setWitness(e.target.value)}>
                 {buddies.map((b) => (
-                  <option key={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
                 ))}
               </select>
             </Field>
@@ -489,7 +494,7 @@ function ExtensionModal({ task, onClose, extensionsLeft, witnessed }: { task: Ta
             {extensionsLeft === Infinity ? "Unlimited extensions on this goal." : `${extensionsLeft} extension${extensionsLeft === 1 ? "" : "s"} left on this goal.`} If nobody answers in 24 hours it’s approved automatically.
           </p>
           <Button type="submit" disabled={!reason.trim() || !date}>
-            {witnessed && witness ? `Send to ${witness}` : "Move deadline"}
+            {witnessed && witness ? `Send to ${witnessName}` : "Move deadline"}
           </Button>
         </form>
       )}

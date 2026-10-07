@@ -64,6 +64,7 @@ export interface HostedSession {
   id: string;
   title: string;
   hostName: string;
+  hostUserId?: string;
   isMine: boolean;
   start: number;
   shape: SessionShape;
@@ -93,7 +94,10 @@ export interface SessionLog {
 }
 
 export interface Buddy {
+  /** Relationship id (live) or a local id (demo). */
   id: string;
+  /** The buddy's account id (live mode only). */
+  userId?: string;
   name: string;
   hue: number;
   streak: number;

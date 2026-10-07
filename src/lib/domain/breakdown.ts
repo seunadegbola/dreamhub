@@ -1,9 +1,8 @@
 /**
  * Task breakdown (PRD §10).
  *
- * Front-end milestone: `suggestBreakdown` returns template-based suggestions with a short
- * simulated delay. In the backend milestone this becomes an API route that calls the AI
- * provider, keeping these templates as the fallback when the call fails or takes > 5s.
+ * Templates used when the AI breakdown (app/api/breakdown) is unavailable, slow (> 5s)
+ * or not configured. Pure, so it runs on server and client.
  */
 
 export type Category = "work" | "school" | "business" | "creative" | "personal" | "other";
@@ -150,10 +149,6 @@ export function breakdownSteps(goal: string, category: Category, detail: Detail 
   return steps;
 }
 
-export async function suggestBreakdown(goal: string, category: Category, detail: Detail = "medium"): Promise<SuggestedStep[]> {
-  await new Promise((r) => setTimeout(r, 900));
-  return breakdownSteps(goal, category, detail);
-}
 
 function lowerFirst(s: string) {
   return s.charAt(0).toLowerCase() + s.slice(1);

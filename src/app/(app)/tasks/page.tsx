@@ -9,7 +9,8 @@ import { useToday } from "@/lib/hooks";
 import { Button, Field, Panel, Progress, Segmented, inputClass, DeadlineBadge } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Mascot } from "@/components/brand";
-import { CATEGORIES, suggestBreakdown, type Category, type SuggestedStep } from "@/lib/domain/breakdown";
+import { CATEGORIES, type Category, type SuggestedStep } from "@/lib/domain/breakdown";
+import { suggestBreakdown } from "@/lib/breakdown-client";
 import { INTENSITY, deadlineState, type Intensity } from "@/lib/domain/cascade";
 import { addDays, formatShortDate, daysBetween } from "@/lib/domain/time";
 import { IconPlus, IconClose } from "@/components/icons";
@@ -118,7 +119,7 @@ function NewGoalModal({ open, onClose }: { open: boolean; onClose: () => void })
 
   const breakDown = async () => {
     setLoading(true);
-    setSteps(await suggestBreakdown(title, category));
+    setSteps(await suggestBreakdown(title, category, "medium", { deadline: hasDeadline ? deadline : undefined }));
     setLoading(false);
   };
 

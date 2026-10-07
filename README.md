@@ -2,7 +2,12 @@
 
 Social accountability app: break goals into steps, set deadlines that stick, and focus together every evening (Focus Hour, 18:30–20:30 UK time).
 
-This is **milestone 1: the front end**, built from the PRD (v2). Everything runs in the browser with local demo data so the whole product can be clicked through. The backend (Supabase) and live video (LiveKit) are milestone 2.
+Built from the PRD (v2):
+
+- **Milestone 1, front end**: every screen, with a local demo mode (no account needed).
+- **Milestone 2, backend**: Supabase accounts and data with row-level security, LiveKit video in the Focus Room, AI task breakdown.
+
+**To go live, follow [SETUP.md](SETUP.md).** Without the environment variables, the app runs in demo mode only.
 
 ## Run it
 
@@ -10,6 +15,7 @@ This is **milestone 1: the front end**, built from the PRD (v2). Everything runs
 npm install
 npm run dev      # http://localhost:3000
 npm test         # domain logic tests (streaks, cascade, Focus Hour)
+npm run test:db  # database security tests (runs the migration on an in-memory Postgres)
 npm run build    # production build
 ```
 
@@ -40,11 +46,23 @@ The `src/lib/domain` folder is pure TypeScript with no UI or storage, so the sam
 - **Font**: Wotfard is specified. Until the licensed font files are added, Outfit stands in. To switch, drop the `.woff2` files in `src/app/fonts/` and swap the `src` list in `src/app/fonts.ts`.
 - **Mascot**: an SVG redraw of the supplied octopus with mood variants (happy, looking, celebrating, sleepy, waving, stretching, determined). Replace with the illustrator's final poses when available.
 
-## Milestone 2: backend and video
+## Backend
 
-1. **Supabase**: auth (Google + email magic link), Postgres tables per PRD §19, Row Level Security, realtime presence for rooms. Replace store actions in `src/lib/store.ts` with Supabase calls; components already go through those actions.
-2. **Server clock and scheduler**: a scheduled job creates Focus Hour instances and closes each user's day at 03:00 local (writes `DailyActivity`, updates streaks, sends save-day prompts).
-3. **LiveKit**: replace the placeholder video tiles with LiveKit rooms behind a `VideoProvider` interface (PRD §18). Up to 8 per table, mics auto-muted at block start.
-4. **AI breakdown**: API route calling the AI provider with a 5s timeout, falling back to the templates.
-5. **Notifications**: web push with the daily cap and quiet hours.
-6. **Moderation**: report queue and admin tools.
+| Area | Where |
+| --- | --- |
+| Database schema, security rules, server functions | `supabase/migrations/0001_init.sql` |
+| Security rule tests (60 checks) | `supabase/tests/rls.test.mjs` |
+| Loading and saving user data | `src/lib/remote.ts` (called from store actions in `src/lib/store.ts`) |
+| Sign-in: email link and Google | `src/app/start/page.tsx`, `src/app/login`, `src/app/auth/callback`, `src/middleware.ts` |
+| Who can see the app | `src/lib/session-gate.ts` |
+| Video passes, host removal | `src/app/api/livekit/*`, `src/lib/video.ts`, `src/components/live-video.tsx` |
+| AI breakdown with template fallback | `src/app/api/breakdown/route.ts`, `src/lib/breakdown-client.ts` |
+
+Two modes share the same screens: **demo** (data stays in the browser) and **live** (signed in; every change saves to Supabase straight after the screen updates).
+
+## Next
+
+1. Scheduled jobs: save-day and Focus Hour reminders (needs web push), weekly summary email.
+2. Proper email sending (SMTP) and Google sign-in configuration.
+3. Moderation queue screen for reports.
+4. Recurring hosted sessions, calendar invites.

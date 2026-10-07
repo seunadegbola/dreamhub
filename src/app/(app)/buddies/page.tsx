@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { useStore } from "@/lib/store";
 import { useToday } from "@/lib/hooks";
@@ -21,6 +21,10 @@ export default function Buddies() {
   const incoming = s.buddies.filter((b) => b.status === "pending_in");
   const outgoing = s.buddies.filter((b) => b.status === "pending_out");
   const saveDays = active.filter((b) => b.missedYesterday && b.today !== "active");
+  const refreshBuddies = s.refreshBuddies;
+  useEffect(() => {
+    refreshBuddies();
+  }, [refreshBuddies]);
 
   return (
     <div className="space-y-8">
@@ -53,6 +57,31 @@ export default function Buddies() {
           </div>
         </Panel>
       ))}
+
+      {s.witnessRequests.length > 0 && (
+        <section>
+          <SectionTitle>Extension requests</SectionTitle>
+          <ul className="space-y-2">
+            {s.witnessRequests.map((w) => (
+              <li key={w.id} className="flex flex-col gap-3 rounded-[var(--dh-radius)] border-2 border-ink bg-surface p-4 sm:flex-row sm:items-center">
+                <p className="flex-1">
+                  <strong>{w.fromName}</strong> wants to move “{w.taskTitle}” from {formatShortDate(w.oldDue)} to {formatShortDate(w.newDue)}.
+                  <span className="block text-sm text-muted">“{w.reason}”</span>
+                </p>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" onClick={() => s.approveExtension(w.id)}>
+                    Approve
+                  </Button>
+                  <ButtonLink size="sm" variant="ghost" href={`mailto:?subject=${encodeURIComponent(`About “${w.taskTitle}”`)}`}>
+                    Ask a question
+                  </ButtonLink>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-sm text-muted">If you don’t answer within 24 hours, it’s approved automatically.</p>
+        </section>
+      )}
 
       {incoming.length > 0 && (
         <section>
@@ -164,7 +193,7 @@ export default function Buddies() {
               variant="secondary"
               className="justify-start"
               onClick={() => {
-                if (nudgeFor) s.nudge(nudgeFor);
+                if (nudgeFor) s.nudge(nudgeFor, n);
                 setNudgeFor(null);
               }}
             >
@@ -182,10 +211,10 @@ export default function Buddies() {
 function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const s = useStore();
   const [name, setName] = useState("");
-  const link = typeof window !== "undefined" ? `${window.location.origin}/start?buddy=${encodeURIComponent(s.profile.name)}` : "";
+  const link = typeof window !== "undefined" ? `${window.location.origin}/start` : "";
   return (
     <Modal open={open} onClose={onClose} title="Invite a buddy">
-      <p className="text-muted">Send this link. When they join, you’ll be offered as each other’s buddy.</p>
+      <p className="text-muted">Not on DreamHub yet? Send them this link. Once they’ve joined, send a request with their email.</p>
       <div className="mt-3 flex gap-2">
         <input readOnly value={link} className={clsx(inputClass, "text-sm")} onFocus={(e) => e.target.select()} />
         <Button
@@ -204,15 +233,15 @@ function InviteModal({ open, onClose }: { open: boolean; onClose: () => void }) 
           e.preventDefault();
           if (!name.trim()) return;
           s.addBuddyRequest(name.trim());
-          s.showToast(`Request sent to ${name.trim()}.`);
+          if (s.mode !== "live") s.showToast(`Request sent to ${name.trim()}.`);
           setName("");
           onClose();
         }}
       >
         <label className="block">
-          <span className="mb-1.5 block text-sm font-semibold">Or send a request to someone on DreamHub</span>
+          <span className="mb-1.5 block text-sm font-semibold">Or send a request to someone already on DreamHub</span>
           <div className="flex gap-2">
-            <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Their name or email" />
+            <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={s.mode === "live" ? "Their email address" : "Their name or email"} type={s.mode === "live" ? "email" : "text"} />
             <Button type="submit">Send</Button>
           </div>
         </label>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import clsx from "clsx";
 import { useStore } from "@/lib/store";
@@ -29,6 +29,14 @@ function Focus() {
   const [taskId, setTaskId] = useState(params.get("task") ?? openTasks[0]?.id ?? "");
   const [blocks, setBlocks] = useState(1);
   const [filter, setFilter] = useState<Category | "all">("all");
+  const refreshSessions = s.refreshSessions;
+  const refreshBuddies = s.refreshBuddies;
+  useEffect(() => {
+    refreshSessions();
+    refreshBuddies();
+    const id = setInterval(refreshSessions, 60_000);
+    return () => clearInterval(id);
+  }, [refreshSessions, refreshBuddies]);
 
   const upcoming = s.sessions.filter((x) => sessionEnd(x.start, x.shape) > now).sort((a, b) => a.start - b.start);
   const invites = upcoming.filter((x) => x.invitedMe && !x.response);

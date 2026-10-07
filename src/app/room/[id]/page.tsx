@@ -14,6 +14,11 @@ import { Confetti, Toast } from "@/components/feedback";
 import { IconCam, IconCamOff, IconChat, IconClose, IconLeave, IconMic, IconMicOff, IconPause, IconPlay } from "@/components/icons";
 import type { CheckInType, SessionType } from "@/lib/types";
 import { XP } from "@/lib/domain/xp";
+import { useSessionGate } from "@/lib/session-gate";
+import { supabase } from "@/lib/supabase/client";
+import { mapSession, remote } from "@/lib/remote";
+import { fetchVideoToken, videoConfigured } from "@/lib/video";
+import { ConnectionBanner, LiveChat, LocalControls, ReportModal, RosterReporter, VideoGrid, VideoSession, type RosterPerson } from "@/components/live-video";
 
 export default function RoomPage() {
   return (
@@ -25,12 +30,26 @@ export default function RoomPage() {
 
 function RoomGate() {
   const hydrated = useHydrated();
-  const onboarded = useStore((s) => s.profile.onboarded);
-  const router = useRouter();
-  useEffect(() => {
-    if (hydrated && !onboarded) router.replace("/start");
-  }, [hydrated, onboarded, router]);
-  if (!hydrated || !onboarded) return null;
+  const { state, retry } = useSessionGate();
+  if (!hydrated || state === "checking" || state === "redirecting") {
+    return (
+      <div className="grid min-h-dvh place-items-center" role="status" aria-label="Loading">
+        <Mascot mood="looking" size={88} />
+      </div>
+    );
+  }
+  if (state === "error") {
+    return (
+      <div className="grid min-h-dvh place-items-center p-6 text-center">
+        <div>
+          <p className="text-xl font-semibold">We couldn’t load your account.</p>
+          <Button className="mt-4" onClick={retry}>
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return <Room />;
 }
 
@@ -41,6 +60,7 @@ interface RoomConfig {
   shape: SessionShape;
   people: Person[];
   quiet: boolean;
+  isHost?: boolean;
 }
 
 const CHECKINS: { value: CheckInType; label: string }[] = [
@@ -57,24 +77,39 @@ function Room() {
   const s = useStore();
   const now = useNow(250);
 
+  const live = s.mode === "live";
+
+  /* ---------- hosted session not in my list yet (arrived by link) ---------- */
+  const [preview, setPreview] = useState<import("@/lib/types").HostedSession | null | "missing">(null);
+  useEffect(() => {
+    if (!live || id === "focus-hour" || id === "solo" || s.sessions.some((x) => x.id === id)) return;
+    supabase()
+      .rpc("session_preview", { p_session: id })
+      .then(({ data }) => {
+        const row = Array.isArray(data) ? data[0] : null;
+        setPreview(row && !row.cancelled ? mapSession({ ...row, is_mine: row.host_user_id === s.userId, attendees: [] }) : "missing");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, live]);
+
   /* ---------- session config ---------- */
   const config = useMemo<RoomConfig | null>(() => {
     if (id === "focus-hour") {
-      return { type: "focus_hour", title: "Focus Hour", start: focusHourStart(nowMs(s.clockOffsetMin)), shape: FOCUS_HOUR.shape, people: TABLE_PEOPLE.slice(0, 5), quiet: false };
+      return { type: "focus_hour", title: "Focus Hour", start: focusHourStart(nowMs(s.clockOffsetMin)), shape: FOCUS_HOUR.shape, people: live ? [] : TABLE_PEOPLE.slice(0, 5), quiet: false };
     }
     if (id === "solo") {
       const a = s.activeSolo;
       if (!a) return null;
       return { type: "solo", title: "Solo session", start: a.start, shape: a.shape, people: [], quiet: true };
     }
-    const h = s.sessions.find((x) => x.id === id);
+    const h = s.sessions.find((x) => x.id === id) ?? (preview && preview !== "missing" ? preview : undefined);
     if (!h) return null;
     const people = h.attendees
       .filter((n) => n !== s.profile.name)
       .map((n, i) => TABLE_PEOPLE.find((p) => p.name === n) ?? { id: `a${i}`, name: n, hue: (i * 67) % 360, goal: "Focusing", camera: true, category: h.category });
-    return { type: "hosted", title: h.title, start: h.start, shape: h.shape, people, quiet: h.mode === "quiet" };
+    return { type: "hosted", title: h.title, start: h.start, shape: h.shape, people: live ? [] : people, quiet: h.mode === "quiet", isHost: h.isMine };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, s.activeSolo?.start, s.sessions.length, s.clockOffsetMin]);
+  }, [id, s.activeSolo?.start, s.sessions.length, s.clockOffsetMin, preview]);
 
   // Start a default solo block if someone lands on /room/solo directly.
   useEffect(() => {
@@ -104,6 +139,48 @@ function Room() {
   const [presentIds, setPresentIds] = useState<string[]>(() => config?.people.map((p) => p.id) ?? []);
   const loggedRef = useRef(false);
 
+  /* ---------- live: seat, video, roster ---------- */
+  const [seat, setSeat] = useState<{ sessionId: string; tableNo: number } | null>(null);
+  const [video, setVideo] = useState<{ token: string; url: string } | null>(null);
+  const [roster, setRoster] = useState<RosterPerson[]>([]);
+  const [hiddenVideo, setHiddenVideo] = useState<string[]>([]);
+  const [reporting, setReporting] = useState<RosterPerson | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [breakDismissed, setBreakDismissed] = useState<number | null>(null);
+  const accessToken = useRef<string | null>(null);
+  const seatRef = useRef(seat);
+  seatRef.current = seat;
+
+  useEffect(() => {
+    const onHide = (e: Event) => {
+      const who = (e as CustomEvent<string>).detail;
+      setHiddenVideo((h) => (h.includes(who) ? h.filter((x) => x !== who) : [...h, who]));
+    };
+    window.addEventListener("dh-hide-video", onHide);
+    return () => window.removeEventListener("dh-hide-video", onHide);
+  }, []);
+
+  // If the tab closes mid-session, free the seat (fetch keepalive survives page unload).
+  useEffect(() => {
+    if (!live) return;
+    const onHide = () => {
+      const st = seatRef.current;
+      if (!st || !accessToken.current || loggedRef.current) return;
+      fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/rpc/leave_session`, {
+        method: "POST",
+        keepalive: true,
+        headers: { "content-type": "application/json", apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, authorization: `Bearer ${accessToken.current}` },
+        body: JSON.stringify({ p_session: st.sessionId, p_blocks: 0 }),
+      }).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [live]);
+
+  const livePeople: Person[] = roster
+    .filter((r) => !r.isLocal)
+    .map((r) => ({ id: r.id, name: r.name, hue: r.hue, goal: r.goal, camera: true, category: "other" as const }));
+
   useEffect(() => {
     setPresentIds(config?.people.map((p) => p.id) ?? []);
   }, [config]);
@@ -127,9 +204,12 @@ function Room() {
     const out = outcome ?? last?.type ?? "good";
     const minutes = blocksCompleted * (config?.shape.blockMinutes ?? 25);
     const xpBefore = s.xp;
+    const withNames = live ? livePeople.map((p) => p.name) : config ? config.people.filter((p) => presentIds.includes(p.id)).map((p) => p.name) : [];
     if (config && blocksCompleted > 0) {
-      s.logSession({ type: config.type, title: config.title, blocks: blocksCompleted, minutes, taskId: task?.id, planned: goal || task?.title, outcome: out, with: config.people.filter((p) => presentIds.includes(p.id)).map((p) => p.name) });
+      s.logSession({ type: config.type, title: config.title, blocks: blocksCompleted, minutes, taskId: task?.id, planned: goal || task?.title, outcome: out, with: withNames }, seat?.sessionId ?? (config.type === "hosted" ? id : undefined));
     }
+    if (live && seat) supabase().rpc("leave_session", { p_session: seat.sessionId, p_blocks: blocksCompleted }).then(() => undefined);
+    setVideo(null);
     if (config?.type === "solo") s.endSolo();
     setFinished({ blocks: blocksCompleted, minutes, outcome: out, xpBefore });
   };
@@ -153,6 +233,14 @@ function Room() {
   };
 
   /* ---------- render ---------- */
+  if (!config && live && preview === null && id !== "solo" && id !== "focus-hour") {
+    return (
+      <div className="grid min-h-dvh place-items-center" role="status" aria-label="Loading">
+        <Mascot mood="looking" size={88} />
+      </div>
+    );
+  }
+
   if (!config) {
     return (
       <Shell title="Session">
@@ -169,7 +257,7 @@ function Room() {
   }
 
   if (finished) {
-    return <Completion data={finished} goal={goal || task?.title} taskId={task?.id} people={config.people.filter((p) => presentIds.includes(p.id))} onAgain={() => {
+    return <Completion data={finished} goal={goal || task?.title} taskId={task?.id} people={live ? livePeople : config.people.filter((p) => presentIds.includes(p.id))} live={live} onAgain={() => {
       s.startSolo({ kickoffMinutes: 0, blocks: 1, blockMinutes: 25, breakMinutes: 5 });
       router.push(`/room/solo${task ? `?task=${task.id}` : ""}`);
       setFinished(null);
@@ -201,11 +289,13 @@ function Room() {
             >
               🚀 Start solo now
             </Button>
-            <Button size="lg" variant="secondary" onClick={jumpToFocusHour}>
-              Preview the Focus Hour
-            </Button>
+            {!live && (
+              <Button size="lg" variant="secondary" onClick={jumpToFocusHour}>
+                Preview the Focus Hour
+              </Button>
+            )}
           </div>
-          <p className="mt-3 text-sm text-muted">Preview moves the demo clock to 6:31pm so you can try the room.</p>
+          {!live && <p className="mt-3 text-sm text-muted">Preview moves the demo clock to 6:31pm so you can try the room.</p>}
         </div>
       </Shell>
     );
@@ -220,9 +310,13 @@ function Room() {
           <p className="mt-2 text-lg text-muted">
             Starts at {formatClock(config.start, s.profile.timezone)}, in {formatCountdown(config.start - now)}.
           </p>
-          <Button size="lg" variant="secondary" className="mt-8" onClick={skipToNext}>
-            Skip to the start (demo)
-          </Button>
+          {live ? (
+            <p className="mt-6 text-muted">Keep this page open. The room opens when the session starts.</p>
+          ) : (
+            <Button size="lg" variant="secondary" className="mt-8" onClick={skipToNext}>
+              Skip to the start (demo)
+            </Button>
+          )}
         </div>
       </Shell>
     );
@@ -243,8 +337,36 @@ function Room() {
           </div>
           <form
             className="mt-8 space-y-4"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
+              if (live && config.type !== "solo") {
+                setJoining(true);
+                try {
+                  const { data: sess } = await supabase().auth.getSession();
+                  accessToken.current = sess.session?.access_token ?? null;
+                  const { data, error } =
+                    config.type === "focus_hour" ? await supabase().rpc("join_focus_hour") : await supabase().rpc("join_session", { p_session: id });
+                  if (error) throw new Error(error.message);
+                  const row = (Array.isArray(data) ? data[0] : data) as { session_id: string; table_no: number };
+                  setSeat({ sessionId: row.session_id, tableNo: row.table_no });
+                  if (videoConfigured) {
+                    try {
+                      const v = await fetchVideoToken(row.session_id);
+                      setVideo({ token: v.token, url: v.url });
+                    } catch (err) {
+                      s.showToast(`${(err as Error).message}. You can keep focusing without video.`);
+                    }
+                  }
+                } catch (err) {
+                  const msg = (err as Error).message;
+                  setJoining(false);
+                  s.showToast(
+                    msg.includes("full") ? "This session is full. Try another, or focus solo." : msg.includes("removed") ? "The host removed you from this session." : msg.includes("suspended") ? "Your account is paused while we review a report." : "We couldn’t join the session. Try again.",
+                  );
+                  return;
+                }
+                setJoining(false);
+              }
               joinedAt.current = now;
               setGoalSet(true);
             }}
@@ -272,8 +394,8 @@ function Room() {
               </button>
             )}
             <div className="flex flex-wrap items-center gap-3 pt-4">
-              <Button type="submit" size="lg">
-                🔥 Let’s make some progress
+              <Button type="submit" size="lg" disabled={joining}>
+                {joining ? "Finding your seat…" : "🔥 Let’s make some progress"}
               </Button>
               {!config.quiet && (
                 <span className="text-sm text-muted">Your mic starts muted. Camera is optional.</span>
@@ -293,9 +415,11 @@ function Room() {
   const segEnd = seg?.end ?? effectiveNow;
   const remaining = segEnd - effectiveNow;
   const nextFocus = segments.find((g) => g.kind === "focus" && g.start >= segEnd);
-  const present = config.people.filter((p) => presentIds.includes(p.id));
+  const present = live ? livePeople : config.people.filter((p) => presentIds.includes(p.id));
+  const showBreakCard = isBreak && !needsCheckin && breakDismissed !== breakBlock;
+  const checkinUpdate = breakBlock !== null && checkins[breakBlock] ? checkins[breakBlock].note || CHECKINS.find((c) => c.value === checkins[breakBlock!].type)?.label : undefined;
 
-  return (
+  const room = (
     <Shell
       title={config.title}
       onLeave={() => {
@@ -307,7 +431,7 @@ function Room() {
       }}
       right={
         <span className="hidden text-sm font-semibold text-muted sm:inline">
-          {config.type === "focus_hour" ? "Table 12 · " : ""}
+          {config.type === "focus_hour" ? `Table ${seat?.tableNo ?? 12} · ` : ""}
           {present.length + 1} here
         </span>
       }
@@ -340,15 +464,17 @@ function Room() {
             </ol>
           </div>
 
-          {isBreak && !needsCheckin && (
+          {live && video && <ConnectionBanner />}
+
+          {showBreakCard && (
             <div className="rise flex flex-col gap-3 rounded-[var(--dh-radius)] border-2 border-ink bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-lg font-semibold">🧘 You’ve earned a break.</p>
                 <p className="text-muted">Grab some water. Stretch. See how the table got on.</p>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
-                <Button size="sm" onClick={skipToNext}>
-                  🚀 Continue
+                <Button size="sm" onClick={() => (live ? setBreakDismissed(breakBlock) : skipToNext())}>
+                  {live ? `🚀 Back at ${nextFocus ? formatClock(nextFocus.start, s.profile.timezone) : "the next block"}` : "🚀 Continue"}
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => finish()}>
                   I’m done for today
@@ -358,7 +484,34 @@ function Room() {
           )}
 
           {/* video grid */}
-          {!config.quiet || config.type !== "solo" ? (
+          {live && video ? (
+            <VideoGrid
+              showUpdates={isBreak}
+              quiet={config.quiet}
+              hidden={hiddenVideo}
+              isHost={!!config.isHost}
+              onReport={(p) => setReporting(p)}
+              onBlock={(p) => {
+                if (confirm(`Block ${p.name}? You won’t be seated together or see each other’s sessions.`)) {
+                  s.blockUser(p.id);
+                  setHiddenVideo((h) => [...h, p.id]);
+                }
+              }}
+              onRemove={async (p) => {
+                if (!seat || !confirm(`Remove ${p.name} from this session? They won’t be able to rejoin.`)) return;
+                const r = await fetch("/api/livekit/remove", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: seat.sessionId, userId: p.id }) });
+                s.showToast(r.ok ? `${p.name} was removed.` : "We couldn’t remove them. Try again.");
+              }}
+            />
+          ) : live && config.type !== "solo" ? (
+            <div className="flex items-center gap-4 rounded-[var(--dh-radius)] border-[1.5px] border-hairline bg-surface p-5">
+              <Mascot mood="determined" size={72} />
+              <div>
+                <p className="text-lg font-semibold">You’re in, without video.</p>
+                <p className="text-muted">Your timer, steps and streak work as normal.</p>
+              </div>
+            </div>
+          ) : !config.quiet || config.type !== "solo" ? (
             <ul className={clsx("grid gap-3", present.length + 1 <= 2 ? "grid-cols-2" : present.length + 1 <= 4 ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-3")}>
               <SelfTile cam={cam && !config.quiet} name={s.profile.name || "You"} goal={goal || task?.title || "Focusing"} reaction={reaction} mic={mic} />
               {present.map((p) => (
@@ -439,7 +592,7 @@ function Room() {
               <ControlButton label="Chat" active={chatOpen} onClick={() => setChatOpen((c) => !c)}>
                 <IconChat />
               </ControlButton>
-              {["👋", "👍", "🔥"].map((e) => (
+              {!live && ["👋", "👍", "🔥"].map((e) => (
                 <button
                   key={e}
                   onClick={() => setReaction({ id: Date.now(), emoji: e })}
@@ -466,7 +619,7 @@ function Room() {
         </div>
       </div>
 
-      {chatOpen && <ChatDrawer onClose={() => setChatOpen(false)} people={present} />}
+      {chatOpen && (live && video ? <LiveChat onClose={() => setChatOpen(false)} /> : !live ? <ChatDrawer onClose={() => setChatOpen(false)} people={present} /> : null)}
 
       {needsCheckin && breakBlock !== null && (
         <CheckIn
@@ -474,16 +627,41 @@ function Room() {
           goal={goal || task?.title}
           onSubmit={(type, note) => {
             setCheckins((c) => ({ ...c, [breakBlock]: { type, note } }));
+            if (live && seat) remote.checkIn(seat.sessionId, breakBlock, type, note).catch(() => undefined);
             // Someone wraps up at the first break, so the table changes over time.
             if (breakBlock === 1 && present.length > 3) setPresentIds((ids) => ids.slice(0, -1));
           }}
         />
       )}
 
-      <DemoClock onSkip={skipToNext} />
+      {!live && <DemoClock onSkip={skipToNext} />}
+      <ReportModal
+        person={reporting}
+        onClose={() => setReporting(null)}
+        onSubmit={(reason, details, alsoBlock) => {
+          if (!reporting) return;
+          s.reportUser(reporting.id, reason, details, seat?.sessionId);
+          if (alsoBlock) {
+            s.blockUser(reporting.id);
+            setHiddenVideo((h) => [...h, reporting.id]);
+          }
+          setReporting(null);
+        }}
+      />
       <Toast />
     </Shell>
   );
+
+  if (live && video) {
+    return (
+      <VideoSession token={video.token} url={video.url} onDisconnected={() => undefined}>
+        <LocalControls cam={cam && !config.quiet} mic={mic} goal={goal || task?.title || "Focusing"} update={isBreak ? checkinUpdate : undefined} />
+        <RosterReporter onChange={setRoster} />
+        {room}
+      </VideoSession>
+    );
+  }
+  return room;
 }
 
 /* ---------------- Pieces ---------------- */
@@ -709,12 +887,14 @@ function Completion({
   goal,
   taskId,
   people,
+  live,
   onAgain,
 }: {
   data: { blocks: number; minutes: number; outcome: CheckInType; xpBefore: number };
   goal?: string;
   taskId?: string;
   people: Person[];
+  live?: boolean;
   onAgain: () => void;
 }) {
   const s = useStore();
@@ -785,9 +965,9 @@ function Completion({
                       variant={added.includes(p.name) ? "ghost" : "secondary"}
                       disabled={added.includes(p.name)}
                       onClick={() => {
-                        s.addBuddyRequest(p.name);
+                        s.addBuddyRequest(p.name, live ? p.id : undefined);
                         setAdded([...added, p.name]);
-                        s.showToast(`Buddy request sent to ${p.name}.`);
+                        if (!live) s.showToast(`Buddy request sent to ${p.name}.`);
                       }}
                     >
                       <Avatar name={p.name} hue={p.hue} size={22} />

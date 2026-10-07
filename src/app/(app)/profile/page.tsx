@@ -158,20 +158,35 @@ export default function Profile() {
               </Button>
               <Button
                 variant="danger"
-                onClick={() => {
-                  if (confirm("Delete your account and all your data? This can’t be undone.")) {
-                    s.reset();
+                onClick={async () => {
+                  if (!confirm("Delete your account and all your data? This can’t be undone.")) return;
+                  try {
+                    await s.deleteAccount();
                     router.push("/");
+                  } catch {
+                    s.showToast("We couldn’t delete your account. Try again.");
                   }
                 }}
               >
                 Delete account
               </Button>
+              {s.mode === "live" && (
+                <Button
+                  variant="ghost"
+                  onClick={async () => {
+                    await s.signOut();
+                    router.push("/");
+                  }}
+                >
+                  Sign out
+                </Button>
+              )}
             </div>
           </div>
         </Box>
       </div>
 
+      {s.mode === "demo" && (
       <Panel tone="haze" className="p-5">
         <SectionTitle>Demo controls</SectionTitle>
         <p className="-mt-2 mb-4 max-w-2xl">
@@ -219,6 +234,7 @@ export default function Profile() {
           </Button>
         </div>
       </Panel>
+      )}
     </div>
   );
 }

@@ -79,7 +79,7 @@ export default function NewSession() {
                       disabled={invited.includes(b.name)}
                       onClick={() => {
                         setInvited([...invited, b.name]);
-                        s.showToast(`${b.name} has been invited.`);
+                        s.inviteBuddyToSession(session.id, b.id);
                       }}
                     >
                       {invited.includes(b.name) ? "Invited" : "Invite"}
@@ -94,12 +94,14 @@ export default function NewSession() {
             onSubmit={(e) => {
               e.preventDefault();
               if (!/\S+@\S+\.\S+/.test(email)) return;
+              const when = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", timeZone: s.profile.timezone }).format(session.start);
+              const body = `Want to focus together? I’m hosting “${session.title}” on DreamHub, ${when}.\n\nJoin here: ${link}`;
+              window.location.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(`Focus with me: ${session.title}`)}&body=${encodeURIComponent(body)}`;
               setInvited([...invited, email]);
-              s.showToast(`Invite sent to ${email} with a calendar file.`);
               setEmail("");
             }}
           >
-            <Field label="Invite by email">
+            <Field label="Invite by email" hint="Opens your email app with the link filled in.">
               <div className="flex gap-2">
                 <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="friend@example.com" className={inputClass} />
                 <Button type="submit" variant="secondary">

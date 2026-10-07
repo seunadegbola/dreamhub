@@ -36,7 +36,7 @@ export default function Landing() {
               Open DreamHub
             </ButtonLink>
           ) : (
-            <ButtonLink href="/start" variant="secondary" size="sm">
+            <ButtonLink href="/login" variant="secondary" size="sm">
               Log in
             </ButtonLink>
           )}

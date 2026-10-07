@@ -6,11 +6,13 @@ import clsx from "clsx";
 import { Logo, Mascot, Swirls } from "@/components/brand";
 import { Button, ButtonLink, Checkbox, Field, Panel, Segmented, inputClass } from "@/components/ui";
 import { IconBack, IconClose, IconPlus } from "@/components/icons";
-import { CATEGORIES, suggestBreakdown, type Detail } from "@/lib/domain/breakdown";
+import { CATEGORIES, type Detail } from "@/lib/domain/breakdown";
+import { suggestBreakdown } from "@/lib/breakdown-client";
 import { cascadeDeadlines, INTENSITY, type Intensity } from "@/lib/domain/cascade";
 import { addDays, dreamDay, formatClock, formatDuration, formatShortDate } from "@/lib/domain/time";
 import { focusHourBanner } from "@/lib/domain/session";
 import { useStore, nowMs } from "@/lib/store";
+import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { useHydrated } from "@/lib/hooks";
 import { Toast } from "@/components/feedback";
 
@@ -21,9 +23,18 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const router = useRouter();
   const onboarded = useStore((s) => s.profile.onboarded);
+  const setDraft = useStore((s) => s.setDraft);
 
   useEffect(() => {
-    if (hydrated && onboarded && step === 0) router.replace("/home");
+    const q = new URLSearchParams(window.location.search);
+    const st = Number(q.get("step"));
+    if (st >= 0 && st < STEPS.length && q.get("step") !== null) setStep(st);
+    const nx = q.get("next");
+    if (nx && nx.startsWith("/") && !nx.startsWith("//")) setDraft({ next: nx });
+  }, [setDraft]);
+
+  useEffect(() => {
+    if (hydrated && onboarded && step === 0 && !new URLSearchParams(window.location.search).get("step")) router.replace("/home");
   }, [hydrated, onboarded, step, router]);
 
   if (!hydrated) return null;
@@ -217,7 +228,7 @@ function StepPlan({ onNext }: { onNext: () => void }) {
     let live = true;
     if (draft.steps.length > 0 && detail === "medium" && !loading) return;
     setLoading(true);
-    suggestBreakdown(draft.goal ?? "", draft.category ?? "other", detail).then((steps) => {
+    suggestBreakdown(draft.goal ?? "", draft.category ?? "other", detail, { deadline: draft.deadline }).then((steps) => {
       if (!live) return;
       setDraft({ steps });
       setLoading(false);
@@ -352,33 +363,84 @@ function StepTogether({ onNext }: { onNext: () => void }) {
 
 function StepSave({ onNext }: { onNext: () => void }) {
   const completeOnboarding = useStore((s) => s.completeOnboarding);
+  const setDraft = useStore((s) => s.setDraft);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [dob, setDob] = useState("");
   const [agree, setAgree] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const age = dob ? Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 86400000)) : null;
   const tooYoung = age !== null && age < 18;
-  const valid = name.trim() && /\S+@\S+\.\S+/.test(email) && age !== null && !tooYoung && agree;
+  const eligible = age !== null && !tooYoung && agree;
+  const valid = eligible && name.trim() && /\S+@\S+\.\S+/.test(email);
+  const live = supabaseConfigured;
+  const callback = (path: string) => `${window.location.origin}/auth/callback?next=${encodeURIComponent(path)}`;
 
-  const submit = () => {
-    if (!valid) return;
-    completeOnboarding(name.trim(), email.trim());
-    onNext();
+  const remember = () => setDraft({ account: { name: name.trim(), dateOfBirth: dob } });
+
+  const google = async () => {
+    if (!eligible) return setError("Add your date of birth and agree to the guidelines first.");
+    if (!live) {
+      setName((n) => n || "Alex");
+      setEmail((e) => e || "alex@gmail.com");
+      return;
+    }
+    remember();
+    setBusy(true);
+    const { error } = await supabase().auth.signInWithOAuth({ provider: "google", options: { redirectTo: callback("/start/finish") } });
+    if (error) {
+      setBusy(false);
+      setError("Google sign-in isn’t available right now. Use your email instead.");
+    }
   };
+
+  const submit = async () => {
+    if (!valid) return;
+    if (!live) {
+      completeOnboarding(name.trim(), email.trim());
+      onNext();
+      return;
+    }
+    remember();
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase().auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: callback("/start/finish"), data: { name: name.trim() } },
+    });
+    setBusy(false);
+    if (error) setError(error.message.includes("rate") ? "Too many attempts. Wait a minute and try again." : "We couldn’t send the link. Check the email address and try again.");
+    else setSent(email.trim());
+  };
+
+  if (sent) {
+    return (
+      <>
+        <Heading title="Check your email 📬" sub={`We sent a sign-in link to ${sent}. Open it on this device and your plan will be saved.`} mood="happy" />
+        <p className="text-muted">No email after a minute? Check spam, or</p>
+        <Button variant="secondary" className="mt-3" onClick={() => setSent(null)}>
+          Try a different email
+        </Button>
+      </>
+    );
+  }
 
   return (
     <>
       <Heading title="Let’s save your plan" sub="Create your free account and we’ll keep your goal, steps and progress." mood="happy" />
-      <div className="max-w-md">
-        <Button
-          variant="secondary"
-          size="lg"
-          className="w-full"
-          onClick={() => {
-            setName((n) => n || "Alex");
-            setEmail((e) => e || "alex@gmail.com");
-          }}
-        >
+      <div className="max-w-md space-y-4">
+        <Field label="Date of birth" hint={tooYoung ? undefined : "DreamHub is for adults 18 and over."}>
+          <input type="date" className={inputClass} value={dob} onChange={(e) => setDob(e.target.value)} autoComplete="bday" />
+        </Field>
+        {tooYoung && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">You need to be 18 or over to use DreamHub.</p>}
+        <div className="flex items-start gap-3">
+          <Checkbox checked={agree} onChange={() => setAgree((a) => !a)} label="I agree to the community guidelines" className="mt-0.5" />
+          <span className="text-sm">I agree to the community guidelines: be kind, stay on task, cameras show only you, no recording, no selling.</span>
+        </div>
+
+        <Button variant="secondary" size="lg" className="w-full" onClick={google} disabled={busy}>
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
             <path fill="#4285F4" d="M22.5 12.3c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2.1-1.9 3.3-4.7 3.3-8z" />
             <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.3 1-3.8 1-2.9 0-5.4-2-6.3-4.6H2v2.8A11 11 0 0 0 12 23z" />
@@ -387,7 +449,7 @@ function StepSave({ onNext }: { onNext: () => void }) {
           </svg>
           Continue with Google
         </Button>
-        <div className="my-6 flex items-center gap-3 text-sm text-muted">
+        <div className="flex items-center gap-3 text-sm text-muted">
           <span className="h-px flex-1 bg-hairline" /> or use email <span className="h-px flex-1 bg-hairline" />
         </div>
         <form
@@ -403,18 +465,9 @@ function StepSave({ onNext }: { onNext: () => void }) {
           <Field label="Email" hint="We’ll send a sign-in link. No password needed.">
             <input type="email" className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
           </Field>
-          <Field label="Date of birth" hint={tooYoung ? undefined : "DreamHub is for adults 18 and over."}>
-            <input type="date" className={inputClass} value={dob} onChange={(e) => setDob(e.target.value)} autoComplete="bday" />
-          </Field>
-          {tooYoung && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">You need to be 18 or over to use DreamHub.</p>}
-          <div className="flex items-start gap-3">
-            <Checkbox checked={agree} onChange={() => setAgree((a) => !a)} label="I agree to the community guidelines" className="mt-0.5" />
-            <span className="text-sm">
-              I agree to the community guidelines: be kind, stay on task, cameras show only you, no recording, no selling.
-            </span>
-          </div>
-          <Button type="submit" size="lg" className="w-full" disabled={!valid}>
-            Create my free account
+          {error && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">{error}</p>}
+          <Button type="submit" size="lg" className="w-full" disabled={!valid || busy}>
+            {busy ? "Sending…" : live ? "Email me a sign-in link" : "Create my free account"}
           </Button>
           <p className="text-center text-sm text-muted">Free to get started. No credit card required.</p>
         </form>
@@ -432,7 +485,7 @@ function StepFirstSession() {
   const live = b.state === "live" || b.state === "soon";
   const start = b.state === "later" ? b.startsAt : b.state === "done" ? b.nextStartsAt : undefined;
   // Arrived from an invite link: send them straight into that session.
-  const invited = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("next") : null;
+  const invited = s.draft.next ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("next") : null);
 
   if (invited?.startsWith("/room/")) {
     return (
