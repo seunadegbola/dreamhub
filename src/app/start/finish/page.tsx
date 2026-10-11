@@ -6,6 +6,7 @@ import { Mascot } from "@/components/brand";
 import { Button, ButtonLink } from "@/components/ui";
 import { useStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase/client";
+import { providerFirstName } from "@/lib/auth-name";
 
 /** After the email link or Google: save the plan made during onboarding to the new account. */
 export default function FinishSignup() {
@@ -28,7 +29,7 @@ export default function FinishSignup() {
           await useStore.getState().startLive(user.id, user.email ?? "");
           return router.replace(useStore.getState().draft.next ?? "/home");
         }
-        await useStore.getState().finishLiveOnboarding(user.id, user.email ?? "");
+        await useStore.getState().finishLiveOnboarding(user.id, user.email ?? "", providerFirstName(user.user_metadata));
         router.replace("/start?step=6");
       } catch (e) {
         console.error(e);

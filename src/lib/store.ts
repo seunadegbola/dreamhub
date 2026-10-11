@@ -62,7 +62,8 @@ interface State {
   setDraft: (d: Partial<Draft>) => void;
   completeOnboarding: (name: string, email: string) => void;
   startLive: (userId: string, email: string) => Promise<void>;
-  finishLiveOnboarding: (userId: string, email: string) => Promise<void>;
+  /** `fallbackName` is used when the person didn't type a name (e.g. the first name Google shares). */
+  finishLiveOnboarding: (userId: string, email: string, fallbackName?: string) => Promise<void>;
   loadDemo: () => void;
   reset: () => void;
   signOut: () => Promise<void>;
@@ -244,13 +245,13 @@ export const useStore = create<State>()(
           for (const n of data.incomingNudges) get().showToast(`${n.from}: ${n.message}`);
         },
 
-        finishLiveOnboarding: async (userId, email) => {
+        finishLiveOnboarding: async (userId, email, fallbackName) => {
           const { draft } = get();
           const tz = browserTz();
           const day = dreamDay(Date.now(), tz);
           // Start from a clean slate for this account, then write the plan made before sign-in.
           set({ ...initialData(), mode: "live", userId, draft, profile: { ...emptyProfile(), email } });
-          const name = draft.account?.name ?? email.split("@")[0];
+          const name = draft.account?.name?.trim() || fallbackName?.trim() || email.split("@")[0];
           await remote.saveProfile(userId, { name, timezone: tz, onboarded: true, createdOn: day });
           if (draft.account?.dateOfBirth) await remote.saveDateOfBirth(userId, draft.account.dateOfBirth);
           if (draft.goal && draft.category) {

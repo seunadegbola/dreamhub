@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useStore } from "./store";
 import { supabase, supabaseConfigured } from "./supabase/client";
+import { providerFirstName } from "./auth-name";
 
 export type GateState = "checking" | "ready" | "redirecting" | "error";
 
@@ -52,6 +53,9 @@ export function useSessionGate(): { state: GateState; retry: () => void } {
       }
       if (cancelled) return;
       if (!useStore.getState().profile.onboarded) return go("/start?step=0");
+      // Accounts made before we asked for a name: borrow the first name Google shared, if any.
+      const fallback = providerFirstName(user.user_metadata);
+      if (!useStore.getState().profile.name && fallback) useStore.getState().setProfile({ name: fallback });
       setState("ready");
     })();
 

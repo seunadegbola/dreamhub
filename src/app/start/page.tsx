@@ -14,6 +14,7 @@ import { focusHourBanner } from "@/lib/domain/session";
 import { useStore, nowMs } from "@/lib/store";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { useHydrated } from "@/lib/hooks";
+import { providerFirstName } from "@/lib/auth-name";
 import { Toast } from "@/components/feedback";
 
 const STEPS = ["What", "Goal", "Deadline", "Plan", "Together", "Save", "Start"] as const;
@@ -371,20 +372,52 @@ function StepSave({ onNext }: { onNext: () => void }) {
   const [sent, setSent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const live = supabaseConfigured;
+  // Already signed in (e.g. Google from the log-in page) but not set up yet: no need to sign up again.
+  const [account, setAccount] = useState<{ id: string; email: string } | null | undefined>(live ? undefined : null);
+
+  useEffect(() => {
+    if (!live) return;
+    supabase()
+      .auth.getSession()
+      .then(({ data }) => {
+        const u = data.session?.user;
+        if (!u) return setAccount(null);
+        setAccount({ id: u.id, email: u.email ?? "" });
+        setName((n) => n || providerFirstName(u.user_metadata));
+      });
+  }, [live]);
+
   const age = dob ? Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 86400000)) : null;
   const tooYoung = age !== null && age < 18;
-  const eligible = age !== null && !tooYoung && agree;
-  const valid = eligible && name.trim() && /\S+@\S+\.\S+/.test(email);
-  const live = supabaseConfigured;
+  const eligible = age !== null && !tooYoung && agree && name.trim().length > 0;
+  const validEmail = /\S+@\S+\.\S+/.test(email);
   const callback = (path: string) => `${window.location.origin}/auth/callback?next=${encodeURIComponent(path)}`;
+  const missing = () => (!dob ? "Add your date of birth first." : !name.trim() ? "Tell us what to call you first." : !agree ? "Tick the box to agree to the guidelines first." : null);
 
   const remember = () => setDraft({ account: { name: name.trim(), dateOfBirth: dob } });
 
+  const saveSignedIn = async () => {
+    if (!account) return;
+    if (!eligible) return setError(missing());
+    remember();
+    setBusy(true);
+    setError(null);
+    try {
+      await useStore.getState().finishLiveOnboarding(account.id, account.email, name.trim());
+      onNext();
+    } catch (e) {
+      console.error(e);
+      setBusy(false);
+      setError("We couldn’t save your plan. Check your connection and try again.");
+    }
+  };
+
   const google = async () => {
-    if (!eligible) return setError("Add your date of birth and agree to the guidelines first.");
+    if (!eligible) return setError(missing());
     if (!live) {
-      setName((n) => n || "Alex");
-      setEmail((e) => e || "alex@gmail.com");
+      completeOnboarding(name.trim(), "alex@gmail.com");
+      onNext();
       return;
     }
     remember();
@@ -397,7 +430,8 @@ function StepSave({ onNext }: { onNext: () => void }) {
   };
 
   const submit = async () => {
-    if (!valid) return;
+    if (!eligible) return setError(missing());
+    if (!validEmail) return setError("Enter a valid email address.");
     if (!live) {
       completeOnboarding(name.trim(), email.trim());
       onNext();
@@ -427,14 +461,25 @@ function StepSave({ onNext }: { onNext: () => void }) {
     );
   }
 
+  if (account === undefined) return null;
+
+  const errorBox = error && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">{error}</p>;
+
   return (
     <>
-      <Heading title="Let’s save your plan" sub="Create your free account and we’ll keep your goal, steps and progress." mood="happy" />
+      {account ? (
+        <Heading title="Almost there" sub={`You’re signed in as ${account.email}. Add a couple of details and we’ll save your plan.`} mood="happy" />
+      ) : (
+        <Heading title="Let’s save your plan" sub="Create your free account and we’ll keep your goal, steps and progress." mood="happy" />
+      )}
       <div className="max-w-md space-y-4">
-        <Field label="Date of birth" hint={tooYoung ? undefined : "DreamHub is for adults 18 and over."}>
+        <Field label="Date of birth" hint={tooYoung ? undefined : "DreamHub is for adults 18 and over. Never shown to anyone."}>
           <input type="date" className={inputClass} value={dob} onChange={(e) => setDob(e.target.value)} autoComplete="bday" />
         </Field>
         {tooYoung && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">You need to be 18 or over to use DreamHub.</p>}
+        <Field label="What should we call you?" hint="Your first name or a nickname. People in your sessions will see it.">
+          <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} autoComplete="given-name" maxLength={40} placeholder="e.g. Seun" />
+        </Field>
         <div className="flex items-start gap-3">
           <Checkbox checked={agree} onChange={() => setAgree((a) => !a)} label="I agree to the community guidelines" className="mt-0.5" />
           <span className="text-sm">
@@ -454,37 +499,59 @@ function StepSave({ onNext }: { onNext: () => void }) {
           </span>
         </div>
 
-        <Button variant="secondary" size="lg" className="w-full" onClick={google} disabled={busy}>
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
-            <path fill="#4285F4" d="M22.5 12.3c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2.1-1.9 3.3-4.7 3.3-8z" />
-            <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.3 1-3.8 1-2.9 0-5.4-2-6.3-4.6H2v2.8A11 11 0 0 0 12 23z" />
-            <path fill="#FBBC05" d="M5.7 14a6.6 6.6 0 0 1 0-4.2V7H2a11 11 0 0 0 0 10l3.7-3z" />
-            <path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2 7l3.7 2.8C6.6 7.3 9 5.4 12 5.4z" />
-          </svg>
-          Continue with Google
-        </Button>
-        <div className="flex items-center gap-3 text-sm text-muted">
-          <span className="h-px flex-1 bg-hairline" /> or use email <span className="h-px flex-1 bg-hairline" />
-        </div>
-        <form
-          className="space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit();
-          }}
-        >
-          <Field label="First name">
-            <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} autoComplete="given-name" />
-          </Field>
-          <Field label="Email" hint="We’ll send a sign-in link. No password needed.">
-            <input type="email" className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
-          </Field>
-          {error && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">{error}</p>}
-          <Button type="submit" size="lg" className="w-full" disabled={!valid || busy}>
-            {busy ? "Sending…" : live ? "Email me a sign-in link" : "Create my free account"}
-          </Button>
-          <p className="text-center text-sm text-muted">Free to get started. No credit card required.</p>
-        </form>
+        {account ? (
+          <>
+            {errorBox}
+            <Button size="lg" className="w-full" onClick={saveSignedIn} disabled={busy}>
+              {busy ? "Saving…" : "Save my plan"}
+            </Button>
+            <p className="text-center text-sm text-muted">
+              Not you?{" "}
+              <button
+                type="button"
+                className="font-semibold text-ink underline underline-offset-4"
+                onClick={async () => {
+                  await supabase().auth.signOut();
+                  setAccount(null);
+                  setName("");
+                }}
+              >
+                Use a different account
+              </button>
+            </p>
+          </>
+        ) : (
+          <>
+            {errorBox}
+            <Button variant="secondary" size="lg" className="w-full" onClick={google} disabled={busy}>
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+                <path fill="#4285F4" d="M22.5 12.3c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2.1-1.9 3.3-4.7 3.3-8z" />
+                <path fill="#34A853" d="M12 23c3 0 5.5-1 7.3-2.7l-3.5-2.7c-1 .7-2.3 1-3.8 1-2.9 0-5.4-2-6.3-4.6H2v2.8A11 11 0 0 0 12 23z" />
+                <path fill="#FBBC05" d="M5.7 14a6.6 6.6 0 0 1 0-4.2V7H2a11 11 0 0 0 0 10l3.7-3z" />
+                <path fill="#EA4335" d="M12 5.4c1.6 0 3.1.6 4.2 1.7l3.2-3.2A11 11 0 0 0 2 7l3.7 2.8C6.6 7.3 9 5.4 12 5.4z" />
+              </svg>
+              Continue with Google
+            </Button>
+            <div className="flex items-center gap-3 text-sm text-muted">
+              <span className="h-px flex-1 bg-hairline" /> or use email <span className="h-px flex-1 bg-hairline" />
+            </div>
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submit();
+              }}
+            >
+              <Field label="Email" hint="We’ll send a sign-in link. No password needed.">
+                <input type="email" className={inputClass} value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+              </Field>
+              <Button type="submit" size="lg" className="w-full" disabled={busy || !email}>
+                {busy ? "Sending…" : live ? "Email me a sign-in link" : "Create my free account"}
+              </Button>
+              <p className="text-center text-sm text-muted">Free to get started. No credit card required.</p>
+            </form>
+          </>
+        )}
       </div>
     </>
   );
