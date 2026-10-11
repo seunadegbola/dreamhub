@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Logo, Mascot, Swirls } from "@/components/brand";
 import { Button, ButtonLink } from "@/components/ui";
+import { LegalFooter } from "@/components/legal-page";
 import { useStore } from "@/lib/store";
 import { useHydrated } from "@/lib/hooks";
 
@@ -197,15 +197,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer className="border-t-2 border-ink">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-6 text-sm text-muted md:px-6">
-          <Logo height={20} />
-          <p>For adults 18+. Sessions are never recorded.</p>
-          <Link href="/start" className="font-semibold text-ink underline underline-offset-4">
-            Get started
-          </Link>
-        </div>
-      </footer>
+      <LegalFooter />
     </div>
   );
 }

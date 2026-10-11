@@ -119,6 +119,11 @@ function Shell({ children }: { children: React.ReactNode }) {
         </Link>
       </header>
       <main className="mx-auto max-w-md px-4 pb-16 pt-8">{children}</main>
+      <p className="mx-auto max-w-md px-4 pb-10 text-center text-xs text-muted">
+        <Link href="/privacy-policy" className="underline underline-offset-2">Privacy</Link> ·{" "}
+        <Link href="/terms" className="underline underline-offset-2">Terms</Link> ·{" "}
+        <Link href="/guidelines" className="underline underline-offset-2">Community guidelines</Link>
+      </p>
     </div>
   );
 }

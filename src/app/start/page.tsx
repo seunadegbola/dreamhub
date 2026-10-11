@@ -437,7 +437,21 @@ function StepSave({ onNext }: { onNext: () => void }) {
         {tooYoung && <p className="rounded-[8px] bg-missed-tint px-3 py-2 text-sm font-medium text-missed">You need to be 18 or over to use DreamHub.</p>}
         <div className="flex items-start gap-3">
           <Checkbox checked={agree} onChange={() => setAgree((a) => !a)} label="I agree to the community guidelines" className="mt-0.5" />
-          <span className="text-sm">I agree to the community guidelines: be kind, stay on task, cameras show only you, no recording, no selling.</span>
+          <span className="text-sm">
+            I’m 18 or over and agree to the{" "}
+            <a href="/guidelines" target="_blank" className="font-semibold underline underline-offset-4">
+              community guidelines
+            </a>{" "}
+            (be kind, stay on task, cameras show only you, no recording, no selling), the{" "}
+            <a href="/terms" target="_blank" className="font-semibold underline underline-offset-4">
+              terms
+            </a>{" "}
+            and the{" "}
+            <a href="/privacy-policy" target="_blank" className="font-semibold underline underline-offset-4">
+              privacy policy
+            </a>
+            .
+          </span>
         </div>
 
         <Button variant="secondary" size="lg" className="w-full" onClick={google} disabled={busy}>
