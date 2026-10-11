@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Save your plan 🚀</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f6fc;">
+<!-- preview text shown in the inbox list -->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">One tap to save your plan and start focusing.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f6fc;">
+  <tr>
+    <td align="center" style="padding:32px 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
+        <tr>
+          <td style="padding:0 4px 20px 4px;">
+            <img src="https://joindreamhub.com/brand/logo-email.png" width="98" height="28" alt="DreamHub" style="display:block;border:0;width:98px;height:28px;">
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#ffffff;border:2px solid #050866;border-radius:12px;padding:32px 28px;box-shadow:4px 4px 0 #050866;font-family:Helvetica,Arial,sans-serif;color:#050866;">
+            <h1 style="margin:0 0 12px 0;font-size:26px;line-height:1.2;font-weight:700;color:#050866;">Save your plan 🚀</h1>
+            <p style="margin:0 0 24px 0;font-size:16px;line-height:1.5;color:#4a4f8a;">{{ if .Data.name }}Hi {{ .Data.name }}, {{ else }}Hi, {{ end }}you’re one tap away. Confirm your email and we’ll save your goal, steps and deadlines.</p>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#090C9B;border:2px solid #050866;border-radius:10px;">
+                  <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:14px 24px;font-family:Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;color:#ffffff;text-decoration:none;">Save my plan</a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:24px 0 0 0;font-size:14px;line-height:1.5;color:#4a4f8a;">Open it on the same device and browser you used on DreamHub. The link works once and expires in an hour.</p>
+            <p style="margin:16px 0 0 0;font-size:13px;line-height:1.5;color:#4a4f8a;">Button not working? Copy this link into your browser:<br><a href="{{ .ConfirmationURL }}" style="color:#3066BE;word-break:break-all;">{{ .ConfirmationURL }}</a></p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:20px 4px 0 4px;font-family:Helvetica,Arial,sans-serif;font-size:12px;line-height:1.5;color:#4a4f8a;">
+            You’re getting this because someone entered {{ .Email }} on <a href="https://joindreamhub.com" style="color:#4a4f8a;">joindreamhub.com</a>. If that wasn’t you, ignore this email and nothing will happen.
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
