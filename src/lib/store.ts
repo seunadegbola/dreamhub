@@ -268,6 +268,8 @@ export const useStore = create<State>()(
         signOut: async () => {
           if (get().mode === "live") {
             const { supabase } = await import("./supabase/client");
+            // Stop this device getting their reminders once they sign out.
+            await import("./push").then((m) => m.turnOffPush()).catch(() => {});
             await supabase().auth.signOut();
           }
           set({ ...initialData() });

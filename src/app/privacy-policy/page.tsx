@@ -41,7 +41,7 @@ export default function PrivacyPolicy() {
             <strong>Social features</strong>: your focus buddies, nudges, session invitations, and any reports or blocks you make.
           </li>
           <li>
-            <strong>Settings</strong>: timezone, rest days, notification and animation preferences.
+            <strong>Settings</strong>: timezone, rest days, notification and animation preferences, and, if you switch reminders on, a technical address for each device that should receive them.
           </li>
           <li>
             <strong>Basic technical data</strong>: information your browser sends when you use the site, such as IP address and device type, kept in our hosting and security logs.
@@ -122,6 +122,10 @@ export default function PrivacyPolicy() {
           </li>
           <li>
             <strong>Google</strong>: only if you choose to sign in with Google.
+          </li>
+          <li>
+            <strong>Your browser&apos;s push service</strong> (Google, Apple, Mozilla or Microsoft, depending on your device): delivers reminders you switch on. Reminders are encrypted on the way,
+            so the push service can&apos;t read them.
           </li>
         </ul>
         <p>

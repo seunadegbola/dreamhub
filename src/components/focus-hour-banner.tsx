@@ -8,12 +8,13 @@ import { useStore } from "@/lib/store";
 import { ButtonLink, Button } from "./ui";
 import { Swirls } from "./brand";
 import { liveCount } from "@/lib/people";
+import { useRemindMe } from "./reminders";
 
 /** The Focus Hour banner changes through the day (PRD §14). */
 export function FocusHourBanner({ compact = false }: { compact?: boolean }) {
   const now = useNow(1000);
   const tz = useStore((s) => s.profile.timezone);
-  const showToast = useStore((s) => s.showToast);
+  const remindMe = useRemindMe();
   const b = focusHourBanner(now);
   const local = (t: number) => formatClock(t, tz);
 
@@ -27,7 +28,7 @@ export function FocusHourBanner({ compact = false }: { compact?: boolean }) {
       title = `Focus Hour starts at ${local(b.startsAt)}`;
       sub = ms < 6 * HOUR ? `In ${formatCountdown(ms)}. Two hours of focusing alongside everyone else.` : "Every evening, two hours of focusing alongside everyone else.";
       action = (
-        <Button variant="secondary" onClick={() => showToast(`We'll remind you at ${local(b.startsAt - 5 * 60_000)}.`)}>
+        <Button variant="secondary" onClick={() => remindMe("focus_hour", `We’ll remind you at ${local(b.startsAt - 5 * 60_000)}.`)}>
           Remind me
         </Button>
       );

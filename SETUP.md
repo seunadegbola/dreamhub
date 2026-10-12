@@ -68,3 +68,27 @@ Without this, email sign-in links won't bring people back to the app.
    - **Confirm signup**: subject `Save your DreamHub plan`, body = contents of [`supabase/email-templates/confirm-signup.html`](supabase/email-templates/confirm-signup.html)
    - **Magic link**: subject `Your DreamHub sign-in link`, body = contents of [`supabase/email-templates/magic-link.html`](supabase/email-templates/magic-link.html)
 7. Test: sign in from joindreamhub.com and check the email arrives from hello@joindreamhub.com.
+
+## Reminders (web push, 10 min)
+
+Reminders arrive as phone/computer notifications, even when DreamHub isn't open.
+Rules live in `supabase/migrations/0002_reminders.sql` (`queue_reminders`).
+
+1. **Keys.** Open `dreamhub-reminder-keys.html` (any browser) and add the three values in
+   Vercel → Project → Settings → Environment Variables:
+   `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (secret), `VAPID_SUBJECT`.
+   Then Deployments → ⋯ → Redeploy. Keep these keys forever; new keys mean everyone
+   has to switch reminders on again.
+2. **Database.** Supabase → SQL Editor: run `0002_reminders.sql`, then
+   `0003_reminders_schedule.sql`. (If 0003 complains about extensions, switch on
+   `pg_cron` and `pg_net` in Database → Extensions and run it again.)
+3. **Try it.** Profile → Notifications → Turn on reminders → Send a test.
+
+Checks (SQL Editor):
+- `select * from cron.job_run_details order by start_time desc limit 5;` — job running?
+- `select status_code, content from net._http_response order by created desc limit 5;` — 200 means sent;
+  503 means the Vercel keys are missing.
+- `select kind, title, sent_at from push_outbox order by id desc limit 20;`
+
+iPhone/iPad: reminders only work after **Share → Add to Home Screen** (iOS 16.4+),
+then opening DreamHub from the Home Screen icon.

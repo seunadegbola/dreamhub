@@ -3,10 +3,18 @@
 import { AppShell } from "@/components/app-shell";
 import { Mascot } from "@/components/brand";
 import { Button } from "@/components/ui";
+import { useEffect } from "react";
 import { useSessionGate } from "@/lib/session-gate";
+import { useStore } from "@/lib/store";
+import { syncPush } from "@/lib/push";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { state, retry } = useSessionGate();
+  const live = useStore((s) => s.mode === "live");
+  // Keep this device's reminder subscription fresh (browsers renew them now and then).
+  useEffect(() => {
+    if (state === "ready" && live) syncPush();
+  }, [state, live]);
 
   if (state === "error") {
     return (

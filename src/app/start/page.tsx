@@ -15,6 +15,7 @@ import { useStore, nowMs } from "@/lib/store";
 import { supabase, supabaseConfigured } from "@/lib/supabase/client";
 import { useHydrated } from "@/lib/hooks";
 import { providerFirstName } from "@/lib/auth-name";
+import { useRemindMe } from "@/components/reminders";
 import { Toast } from "@/components/feedback";
 
 const STEPS = ["What", "Goal", "Deadline", "Plan", "Together", "Save", "Start"] as const;
@@ -559,6 +560,7 @@ function StepSave({ onNext }: { onNext: () => void }) {
 
 function StepFirstSession() {
   const s = useStore();
+  const remindMe = useRemindMe();
   const router = useRouter();
   const task = s.tasks.find((t) => !t.completedAt);
   const now = nowMs(s.clockOffsetMin);
@@ -611,9 +613,9 @@ function StepFirstSession() {
             <Button
               variant="secondary"
               size="lg"
-              onClick={() => {
-                s.showToast(start ? `We’ll remind you at ${formatClock(start - 5 * 60_000, s.profile.timezone)}.` : "Reminder set.");
-                setTimeout(() => router.push("/home"), 900);
+              onClick={async () => {
+                await remindMe("focus_hour", start ? `We’ll remind you at ${formatClock(start - 5 * 60_000, s.profile.timezone)}.` : "Reminder set.");
+                setTimeout(() => router.push("/home"), 1800);
               }}
             >
               Remind me before Focus Hour

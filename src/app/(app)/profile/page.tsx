@@ -8,17 +8,9 @@ import { useNow, useToday } from "@/lib/hooks";
 import { Avatar, Box, Button, Field, Panel, SectionTitle, Segmented, inputClass } from "@/components/ui";
 import { addDays, dreamDay, formatClock, formatShortDate, MINUTE, zonedTimeToInstant } from "@/lib/domain/time";
 import { FOCUS_HOUR } from "@/lib/domain/session";
+import { NotificationSettings } from "@/components/reminders";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const NOTIFS = [
-  ["Focus Hour reminder", "5 minutes before, on non-rest days"],
-  ["Save-day reminder", "6:15pm on a save day"],
-  ["Missed-day message", "9am the morning after a miss"],
-  ["Hosted sessions", "Invites and 5-minute reminders"],
-  ["Buddy nudges and save-day prompts", ""],
-  ["Deadline reminders", "Based on each goal’s intensity"],
-  ["Weekly summary email", "Sundays at 6pm"],
-] as const;
 
 export default function Profile() {
   const s = useStore();
@@ -26,7 +18,6 @@ export default function Profile() {
   const today = useToday();
   const now = useNow(1000);
   const [name, setName] = useState(s.profile.name);
-  const [notifs, setNotifs] = useState<Record<string, boolean>>(() => Object.fromEntries(NOTIFS.map(([n]) => [n, n !== "Weekly summary email"])));
   const tomorrow = addDays(today, 1);
 
   const jumpTo = (time: string) => {
@@ -103,29 +94,7 @@ export default function Profile() {
           </div>
         </Box>
 
-        <Box className="p-5">
-          <SectionTitle>Notifications</SectionTitle>
-          <p className="-mt-2 mb-4 text-muted">At most 3 a day, and none between 10pm and 8am.</p>
-          <ul className="space-y-3">
-            {NOTIFS.map(([n, hint]) => (
-              <li key={n} className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-medium">{n}</p>
-                  {hint && <p className="text-sm text-muted">{hint}</p>}
-                </div>
-                <button
-                  role="switch"
-                  aria-checked={notifs[n]}
-                  aria-label={n}
-                  onClick={() => setNotifs({ ...notifs, [n]: !notifs[n] })}
-                  className={clsx("relative h-7 w-12 shrink-0 rounded-full border-2 border-ink transition-colors", notifs[n] ? "bg-blue" : "bg-surface")}
-                >
-                  <span className={clsx("absolute top-0.5 size-5 rounded-full border-2 border-ink bg-white transition-all", notifs[n] ? "left-[22px]" : "left-0.5")} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </Box>
+        <NotificationSettings />
 
         <Box className="space-y-5 p-5">
           <SectionTitle>Celebrations</SectionTitle>

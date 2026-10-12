@@ -10,7 +10,7 @@ export const LEGAL = {
   operator: "",
   country: "the United Kingdom",
   contactEmail: "hello@joindreamhub.com",
-  updated: "11 October 2026",
+  updated: "12 October 2026",
 } as const;
 
 /** "run by X, based in Y" — or just "based in Y" until an operator name is set. */

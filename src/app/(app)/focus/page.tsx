@@ -7,6 +7,7 @@ import { useStore } from "@/lib/store";
 import { useNow } from "@/lib/hooks";
 import { Avatar, Box, Button, ButtonLink, Panel, Pill, SectionTitle, Segmented, inputClass } from "@/components/ui";
 import { FocusHourBanner } from "@/components/focus-hour-banner";
+import { useRemindMe } from "@/components/reminders";
 import { CATEGORIES, type Category } from "@/lib/domain/breakdown";
 import { sessionEnd, sessionPhase } from "@/lib/domain/session";
 import { formatClock, formatShortDate, dreamDay, daysBetween } from "@/lib/domain/time";
@@ -22,6 +23,7 @@ export default function FocusPage() {
 
 function Focus() {
   const s = useStore();
+  const remindMe = useRemindMe();
   const router = useRouter();
   const params = useSearchParams();
   const now = useNow(15_000);
@@ -181,7 +183,7 @@ function Focus() {
                     variant="secondary"
                     onClick={() => {
                       s.respondInvite(x.id, "accepted");
-                      s.showToast(`You’re in. We’ll remind you 5 minutes before.`);
+                      remindMe("hosted", "We’ll remind you 5 minutes before.", "You’re in.");
                     }}
                   >
                     I’ll be there

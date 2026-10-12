@@ -3,7 +3,8 @@
 import { PGlite } from "@electric-sql/pglite";
 import fs from "node:fs";
 
-const migration = fs.readFileSync(process.argv[2] ?? new URL("../migrations/0001_init.sql", import.meta.url), "utf8");
+// 0003 (the cron schedule) needs Supabase's pg_cron/pg_net, so it isn't run here.
+const migration = ["0001_init.sql", "0002_reminders.sql"].map((f) => fs.readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8")).join("\n");
 const db = new PGlite();
 
 const stub = `
@@ -153,6 +154,96 @@ ok("can't report yourself", !!(await fails(B, "insert into reports (reported_use
 await as(A, "insert into session_logs (type,title,local_date,blocks,minutes,outcome) values ('solo','Solo',current_date,1,25,'good')");
 ok("logs are private", (await as(B, "select * from session_logs")).rows.length === 0);
 ok("dream_day rolls over at 03:00", (await db.query("select dream_day('Europe/London', '2026-10-08 01:30:00+01') as d")).rows[0].d.toISOString().slice(0, 10) === "2026-10-07");
+
+console.log("Reminders");
+const fcm = (k) => `https://fcm.googleapis.com/fcm/send/device-${k}`;
+await db.query("update profiles set onboarded = true, timezone = 'Europe/London', rest_weekdays = '{}', created_on = '2026-10-01' where id = any($1)", [[A, B, C]]);
+await as(A, "select save_push_subscription($1, 'p256-key', 'auth-key')", [fcm("a")]);
+ok("can save this device", (await as(A, "select endpoint from push_subscriptions")).rows.length === 1);
+ok("can't see other people's devices", (await as(B, "select * from push_subscriptions")).rows.length === 0);
+ok("only real push services accepted", !!(await fails(B, "select save_push_subscription('https://evil.example/hook', 'k', 'a')")));
+ok("anonymous can't save devices", !!(await fails(null, "select save_push_subscription($1, 'k', 'a')", [fcm("x")])));
+ok("people can't run the reminder job", !!(await fails(A, "select queue_reminders()")));
+ok("people can't read the outbox", (await as(A, "select * from push_outbox")).rows.length === 0);
+ok("outbox can't be taken without the secret", !!(await fails(null, "select * from take_push_outbox('wrong-secret-wrong-secret-wrong-secret')")));
+ok("secret isn't reachable through the API", !!(await fails(null, "select * from private.settings")) && !!(await fails(A, "select * from private.settings")));
+
+const queue = async (at) => (await db.query("select queue_reminders($1::timestamptz) as n", [at])).rows[0].n;
+const outbox = async (uid, kind) => (await db.query("select * from push_outbox where user_id=$1 and kind=$2 order by id", [uid, kind])).rows;
+
+// Tuesday 13 Oct 2026, 18:26 in London: Focus Hour is 4 minutes away.
+await queue("2026-10-13 18:26:00+01");
+ok("Focus Hour reminder at 6:25pm", (await outbox(A, "focus_hour")).length === 1);
+await queue("2026-10-13 18:27:00+01");
+ok("never sent twice", (await outbox(A, "focus_hour")).length === 1);
+ok("no device, no reminder", (await outbox(B, "focus_hour")).length === 0);
+await queue("2026-10-13 18:20:00+01");
+ok("nothing before 6:25pm", (await db.query("select count(*)::int n from push_outbox where kind='focus_hour' and ref='2026-10-12'")).rows[0].n === 0);
+
+await as(C, "select save_push_subscription($1, 'k', 'a')", [fcm("c")]);
+const tue = (await db.query("select extract(dow from date '2026-10-14')::int d")).rows[0].d;
+await db.query("update profiles set rest_weekdays = $2 where id = $1", [C, [tue]]);
+await db.query("update profiles set timezone = 'Asia/Tokyo' where id = $1", [B]);
+await as(B, "select save_push_subscription($1, 'k', 'a')", [fcm("b")]);
+await queue("2026-10-14 18:26:00+01");
+ok("no Focus Hour reminder on a rest day", (await outbox(C, "focus_hour")).length === 0);
+ok("nothing during quiet hours (2:26am in Tokyo)", (await outbox(B, "focus_hour")).length === 0);
+ok("next day's reminder still goes to others", (await outbox(A, "focus_hour")).length === 2);
+
+// Save day: A active on 13 Oct... make 15 Oct a miss, 16 Oct the save day.
+await db.query("delete from daily_activity where user_id = $1", [A]);
+await db.query("insert into daily_activity (user_id, local_date, state) values ($1, '2026-10-14', 'active')", [A]);
+await queue("2026-10-16 18:20:00+01");
+const refs = async (uid, kind) => (await outbox(uid, kind)).map((r) => r.ref);
+ok("save-day reminder after one missed day", (await refs(A, "save_day")).includes("2026-10-16"));
+await queue("2026-10-16 09:30:00+01");
+ok("missed-day message at 9am", (await refs(A, "missed_day")).includes("2026-10-16"));
+await queue("2026-10-17 18:20:00+01");
+ok("no save-day reminder after two missed days", !(await refs(A, "save_day")).includes("2026-10-17"));
+await db.query("insert into daily_activity (user_id, local_date, state) values ($1, '2026-10-19', 'active'), ($1, '2026-10-21', 'active')", [A]);
+await queue("2026-10-21 18:20:00+01");
+ok("no save-day reminder once today counts", !(await refs(A, "save_day")).includes("2026-10-21"));
+
+// Deadlines on 22 Oct.
+const g2 = (await db.query("insert into goals (user_id, title, category, intensity) values ($1, 'Portfolio', 'work', 'standard') returning id", [A])).rows[0].id;
+await db.query("insert into tasks (goal_id, user_id, title, due_on, sort_order) values ($1,$2,'Write the intro','2026-10-22',1), ($1,$2,'Pick photos','2026-10-23',2)", [g2, A]);
+const g3 = (await db.query("insert into goals (user_id, title, category, intensity) values ($1, 'Garden', 'personal', 'gentle') returning id", [A])).rows[0].id;
+await db.query("insert into tasks (goal_id, user_id, title, due_on) values ($1,$2,'Buy seeds','2026-10-23')", [g3, A]);
+await db.query("insert into daily_activity (user_id, local_date, state) values ($1, '2026-10-22', 'active')", [A]);
+await queue("2026-10-22 08:59:00+01");
+ok("no deadline reminder before 9am", !(await refs(A, "deadlines")).includes("2026-10-22"));
+await queue("2026-10-22 09:05:00+01");
+const dl = (await outbox(A, "deadlines")).filter((r) => r.ref === "2026-10-22");
+ok("deadline reminder names today's step", dl[0]?.title === "Due today: Write the intro", JSON.stringify(dl));
+ok("…and counts tomorrow's (not gentle goals)", dl[0]?.body.startsWith("1 due tomorrow."), dl[0]?.body);
+
+// Hosted session in 3 minutes: host B (Tokyo, after midnight) and A who said they'll be there.
+const hs2 = (await db.query("insert into sessions (type, host_user_id, title, scheduled_start) values ('hosted', $1, 'Late sprint', '2026-10-24 17:00:00+01') returning id", [B])).rows[0].id;
+await db.query("insert into session_invites (session_id, inviter_id, invitee_user_id, status) values ($1,$2,$2,'accepted')", [hs2, A]);
+await queue("2026-10-24 16:57:00+01");
+ok("5-minute reminder for people going to a hosted session", (await outbox(A, "hosted")).length === 1);
+ok("host gets it too, even late at night", (await outbox(B, "hosted")).length === 1);
+
+// Nudges, the 3-a-day cap and switching things off.
+await db.query("insert into nudges (from_user_id, to_user_id, message, local_date, created_at) values ($1,$2,'You got this','2026-10-25','2026-10-25 12:00+01'), ($3,$2,'Go go go','2026-10-25','2026-10-25 12:00+01')", [B, A, C]);
+await db.query("insert into push_outbox (user_id, kind, ref, title, body, local_date, created_at, sent_at) values ($1,'invite','x1','t','b','2026-10-25','2026-10-25 10:00+01', now()), ($1,'invite','x2','t','b','2026-10-25','2026-10-25 10:00+01', now())", [A]);
+await queue("2026-10-25 12:01:00+01");
+ok("nudges are sent, but never more than 3 a day", (await outbox(A, "nudge")).filter((r) => r.ref !== "x" && String(r.local_date.toISOString()).startsWith("2026-10-25")).length === 1);
+await as(A, "update profiles_private set notify = '{\"focus_hour\": false}' where id = $1", [A]);
+await queue("2026-10-26 18:26:00+00");
+ok("a switched-off reminder isn't sent", !(await outbox(A, "focus_hour")).some((r) => r.ref === "2026-10-26"));
+
+// Delivery
+const secret = (await db.query("select value from private.settings where key='push_secret'")).rows[0].value;
+await db.query("update push_outbox set sent_at = null, created_at = now() where user_id = $1 and kind = 'nudge'", [A]);
+const taken = (await as(null, "select * from take_push_outbox($1)", [secret])).rows;
+ok("the sender gets waiting reminders with the device", taken.some((t) => t.endpoint === fcm("a") && t.title.endsWith("nudged you") && ["You got this", "Go go go"].includes(t.body)), JSON.stringify(taken));
+ok("…and they're marked sent", (await as(null, "select * from take_push_outbox($1)", [secret])).rows.length === 0);
+await as(B, "select remove_push_subscription($1)", [fcm("a")]);
+ok("can't remove someone else's device", (await db.query("select count(*)::int n from push_subscriptions where endpoint=$1", [fcm("a")])).rows[0].n === 1);
+await as(B, "select save_push_subscription($1, 'k', 'a')", [fcm("a")]);
+ok("a shared device moves to whoever signed in last", (await db.query("select user_id from push_subscriptions where endpoint=$1", [fcm("a")])).rows[0].user_id === B);
+ok("gone devices can be dropped by the sender", (await as(null, "select drop_push_endpoints($1, $2) as n", [secret, [fcm("a")]])).rows[0].n === 1);
 
 console.log("Account deletion");
 await as(D, "select delete_my_account()");
