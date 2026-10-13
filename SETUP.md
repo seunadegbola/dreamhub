@@ -92,3 +92,17 @@ Checks (SQL Editor):
 
 iPhone/iPad: reminders only work after **Share → Add to Home Screen** (iOS 16.4+),
 then opening DreamHub from the Home Screen icon.
+
+## Moderation (5 min)
+
+1. Supabase → SQL Editor: run `0004_moderation.sql` (choose "Run and enable RLS" if asked).
+2. Make yourself an admin (new tab, use the email you sign in with):
+   ```sql
+   insert into private.admins (user_id)
+   select id from auth.users where lower(email) = lower('you@example.com');
+   ```
+   "INSERT 0 1" means it worked; "INSERT 0 0" means no account has that email.
+3. Profile → **Moderation** (only admins see the button), or go to `/admin`.
+
+New reports send admins a notification (if reminders are on for their device).
+To remove an admin: `delete from private.admins where user_id = (select id from auth.users where email = '…');`

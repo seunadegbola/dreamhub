@@ -8,6 +8,7 @@ import { IconBuddies, IconFocus, IconHome, IconProfile, IconProgress, IconTasks 
 import { useStore, selectStreak } from "@/lib/store";
 import { useToday } from "@/lib/hooks";
 import { Toast } from "./feedback";
+import { MemberNotices } from "./member-notices";
 
 const NAV = [
   { href: "/home", label: "Home", Icon: IconHome },
@@ -66,6 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main id="main" className="mx-auto max-w-6xl px-4 pt-6 md:px-6 md:pt-8">
+        <MemberNotices />
         {children}
       </main>
 

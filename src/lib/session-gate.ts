@@ -52,6 +52,9 @@ export function useSessionGate(): { state: GateState; retry: () => void } {
         return;
       }
       if (cancelled) return;
+      const { data: standing } = await supabase().from("profiles").select("status").eq("id", user.id).single();
+      if (cancelled) return;
+      if (standing?.status === "suspended") return go("/suspended");
       if (!useStore.getState().profile.onboarded) return go("/start?step=0");
       // Accounts made before we asked for a name: borrow the first name Google shared, if any.
       const fallback = providerFirstName(user.user_metadata);

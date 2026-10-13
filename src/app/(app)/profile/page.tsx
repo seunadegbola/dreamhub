@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { useStore } from "@/lib/store";
 import { useNow, useToday } from "@/lib/hooks";
-import { Avatar, Box, Button, Field, Panel, SectionTitle, Segmented, inputClass } from "@/components/ui";
+import { Avatar, Box, Button, ButtonLink, Field, Panel, SectionTitle, Segmented, inputClass } from "@/components/ui";
 import { addDays, dreamDay, formatClock, formatShortDate, MINUTE, zonedTimeToInstant } from "@/lib/domain/time";
 import { FOCUS_HOUR } from "@/lib/domain/session";
 import { NotificationSettings } from "@/components/reminders";
+import { admin } from "@/lib/admin";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -18,6 +19,10 @@ export default function Profile() {
   const today = useToday();
   const now = useNow(1000);
   const [name, setName] = useState(s.profile.name);
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    if (s.mode === "live") admin.isAdmin().then(setIsAdmin);
+  }, [s.mode]);
   const tomorrow = addDays(today, 1);
 
   const jumpTo = (time: string) => {
@@ -34,6 +39,11 @@ export default function Profile() {
           <h1 className="text-3xl font-bold tracking-tight">{s.profile.name || "Your profile"}</h1>
           <p className="text-muted">{s.profile.email}</p>
         </div>
+        {isAdmin && (
+          <ButtonLink href="/admin" variant="secondary" size="sm" className="ml-auto">
+            Moderation
+          </ButtonLink>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

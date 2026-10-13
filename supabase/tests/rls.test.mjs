@@ -4,7 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 import fs from "node:fs";
 
 // 0003 (the cron schedule) needs Supabase's pg_cron/pg_net, so it isn't run here.
-const migration = ["0001_init.sql", "0002_reminders.sql"].map((f) => fs.readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8")).join("\n");
+const migration = ["0001_init.sql", "0002_reminders.sql", "0004_moderation.sql"].map((f) => fs.readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8")).join("\n");
 const db = new PGlite();
 
 const stub = `
@@ -244,6 +244,51 @@ ok("can't remove someone else's device", (await db.query("select count(*)::int n
 await as(B, "select save_push_subscription($1, 'k', 'a')", [fcm("a")]);
 ok("a shared device moves to whoever signed in last", (await db.query("select user_id from push_subscriptions where endpoint=$1", [fcm("a")])).rows[0].user_id === B);
 ok("gone devices can be dropped by the sender", (await as(null, "select drop_push_endpoints($1, $2) as n", [secret, [fcm("a")]])).rows[0].n === 1);
+
+console.log("Moderation");
+await db.query("insert into private.admins (user_id) values ($1)", [A]);
+await as(A, "select save_push_subscription($1, 'k', 'a')", [fcm("admin")]);
+ok("admins are recognised", (await as(A, "select is_admin() as a")).rows[0].a === true && (await as(B, "select is_admin() as a")).rows[0].a === false);
+ok("members can't see reports through the admin view", !!(await fails(B, "select * from admin_reports()")));
+ok("members can't warn or suspend", !!(await fails(B, "select admin_warn($1, 'x')", [C])) && !!(await fails(B, "select * from admin_suspend($1, 'x')", [C])));
+ok("anonymous can't check admin status", !!(await fails(null, "select is_admin()")));
+await as(C, "insert into reports (reported_user_id, reason, description) values ($1, 'harassment', 'Kept commenting on my room')", [B]);
+const rep = (await as(A, "select * from admin_reports()")).rows.find((r) => r.reported_id === B && r.reason === "harassment");
+ok("admin sees the report with context", !!rep && rep.reporter_name === "Sam" && rep.reports_90d >= 1, JSON.stringify(rep));
+ok("admin gets a notification about it", (await outbox(A, "report")).some((r) => r.ref === rep?.id && r.title === "New report: Harassment" && !r.body.includes("Kept")));
+
+await as(A, "select admin_warn($1, 'Please keep comments kind.', $2)", [B, rep.id]);
+ok("the member sees the warning", (await as(B, "select message from member_notices where kind='warning'")).rows[0]?.message === "Please keep comments kind.");
+ok("nobody else sees it", (await as(C, "select * from member_notices")).rows.length === 0);
+ok("warning closes the report as upheld", (await db.query("select status from reports where id=$1", [rep.id])).rows[0].status === "upheld");
+ok("member can mark it seen", (await as(B, "update member_notices set seen_at = now() where user_id = $1 returning id", [B])).rows.length === 1);
+ok("member can't edit the message", !!(await fails(B, "update member_notices set message = 'x' where user_id = $1", [B])));
+ok("member can't write notices", !!(await fails(B, "insert into member_notices (user_id, kind, message) values ($1, 'warning', 'x')", [B])));
+ok("decisions aren't readable directly", (await as(A, "select * from moderation_actions")).rows.length === 0);
+
+await as(C, "insert into reports (reported_user_id, reason) values ($1, 'spam')", [B]);
+const rep2 = (await as(A, "select * from admin_reports()")).rows.find((r) => r.reported_id === B && r.reason === "spam");
+ok("record counts reports and warnings", rep2?.reports_90d >= 2 && rep2?.warnings === 1 && rep2?.last_action === "warn", JSON.stringify(rep2));
+await db.query("update session_participants set left_at = null, removed = false where user_id = $1 and session_id = $2", [B, hs]);
+const seats = (await as(A, "select * from admin_suspend($1, 'Suspended after repeated reports.', $2)", [B, rep2.id])).rows;
+ok("suspending returns the rooms to disconnect", seats.some((x) => x.session_id === hs));
+ok("they're removed from the session", (await db.query("select count(*)::int n from session_participants where user_id=$1 and left_at is null", [B])).rows[0].n === 0);
+ok("suspended member can't join Focus Hour", !!(await fails(B, "select * from join_focus_hour()")));
+ok("…or rejoin a session", !!(await fails(B, "select * from join_session($1)", [hs])));
+ok("…or host one", !!(await fails(B, "insert into sessions (type, host_user_id, title, scheduled_start) values ('hosted', $1, 'x', now() + interval '1 day')", [B])));
+ok("…or nudge anyone", !!(await fails(B, "insert into nudges (to_user_id, message, local_date) values ($1, 'hi', '2026-11-01')", [A])));
+ok("they see why", (await as(B, "select message from member_notices where kind='suspension'")).rows[0]?.message === "Suspended after repeated reports.");
+ok("their devices stop getting reminders", (await db.query("select count(*)::int n from push_subscriptions where user_id=$1", [B])).rows[0].n === 0);
+ok("suspended list shows them", (await as(A, "select * from admin_suspended()")).rows.some((r) => r.user_id === B));
+ok("admin can't suspend themselves", !!(await fails(A, "select * from admin_suspend($1, 'x')", [A])));
+const hist = (await as(A, "select * from admin_history($1)", [B])).rows;
+ok("history lists reports and decisions", ["report", "warn", "suspend"].every((k) => hist.some((h) => h.kind === k)), JSON.stringify(hist.map((h) => h.kind)));
+await as(A, "select admin_unsuspend($1, 'Spoke to them')", [B]);
+ok("unsuspending restores access", (await db.query("select status from profiles where id=$1", [B])).rows[0].status === "active" && (await as(B, "select * from join_focus_hour()")).rows.length === 1);
+await as(C, "insert into reports (reported_user_id, reason) values ($1, 'other')", [A]);
+const rep3 = (await as(A, "select * from admin_reports()")).rows.find((r) => r.reported_id === A);
+await as(A, "select admin_dismiss_report($1, 'Not a problem')", [rep3.id]);
+ok("dismissed reports move to resolved", (await as(A, "select * from admin_reports(false)")).rows.some((r) => r.id === rep3.id && r.status === "dismissed"));
 
 console.log("Account deletion");
 await as(D, "select delete_my_account()");
